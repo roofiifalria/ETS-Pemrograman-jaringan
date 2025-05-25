@@ -1,4 +1,3 @@
-# make_dummy_files.py
 import os
 
 def create_dummy_file(filename, size_mb):
@@ -6,7 +5,6 @@ def create_dummy_file(filename, size_mb):
     print(f"Creating {filename} of size {size_mb} MB ({size_bytes} bytes)...")
     try:
         with open(filename, 'wb') as f:
-            # Menulis byte acak lebih baik untuk simulasi data asli
             f.write(os.urandom(size_bytes))
         print(f"Successfully created {filename}")
     except Exception as e:
