@@ -11,31 +11,28 @@ import csv
 import sys
 import logging
 
-# --- Konfigurasi Awal ---
-# Konfigurasi logging untuk client
+# --- Initial Configuration ---
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] (%(name)-10s) %(message)s')
 logger = logging.getLogger('ClientStressTest')
-logger.setLevel(logging.INFO) # Ganti ke logging.DEBUG untuk detail log lebih banyak
+logger.setLevel(logging.INFO)
 
-# Direktori untuk file dummy dan downloaded files
+# Directories for dummy files and downloaded files
 DUMMY_FILES_DIR = 'dummy_files'
 DOWNLOADED_FILES_DIR = 'downloaded_files'
-SERVER_FILES_DIR = 'server_files' # Pastikan ini konsisten dengan server
+SERVER_FILES_DIR = 'server_files' # Ensure this is consistent with the server
 
-# Ukuran buffer untuk menerima data dari socket
+# Socket buffer size and timeout
 SOCKET_BUFFER_SIZE = 65536
-SOCKET_TIMEOUT = 120 # detik, sesuaikan dengan timeout server
+SOCKET_TIMEOUT = 120 # seconds, adjust to server timeout
 
-# --- Fungsi Utility File ---
+# --- File Utility Functions ---
 def ensure_directories_exist():
-    """Memastikan direktori yang diperlukan ada."""
+    """Ensures that required directories exist."""
     os.makedirs(DUMMY_FILES_DIR, exist_ok=True)
     os.makedirs(DOWNLOADED_FILES_DIR, exist_ok=True)
-    # Direktori server_files seharusnya diurus oleh server, tapi bisa juga dicek di sini jika perlu
-    # os.makedirs(SERVER_FILES_DIR, exist_ok=True) 
 
 def generate_dummy_file(filename, size_mb):
-    """Menghasilkan file dummy dengan ukuran tertentu dalam MB."""
+    """Generates a dummy file of a specified size in MB."""
     filepath = os.path.join(DUMMY_FILES_DIR, filename)
     size_bytes = size_mb * 1024 * 1024
     
@@ -46,37 +43,35 @@ def generate_dummy_file(filename, size_mb):
     logger.info(f"Generating dummy file: {filename} ({size_mb}MB)...")
     try:
         with open(filepath, 'wb') as f:
-            # Menulis byte acak untuk mengisi file
-            f.write(os.urandom(size_bytes)) 
+            f.write(os.urandom(size_bytes))
         logger.info(f"Dummy file {filename} generated successfully.")
         return filepath
     except Exception as e:
         logger.error(f"Error generating dummy file {filename}: {e}", exc_info=True)
         raise
 
-# --- Fungsi Komunikasi Client-Server ---
+# --- Client-Server Communication Functions ---
 def create_client_socket(server_address):
-    """Membuat dan menghubungkan socket ke server."""
+    """Creates and connects a socket to the server."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect(server_address)
-        sock.settimeout(SOCKET_TIMEOUT) # Atur timeout di sisi client juga
+        sock.settimeout(SOCKET_TIMEOUT)
         return sock
     except Exception as e:
         logger.error(f"Failed to connect to server {server_address}: {e}")
         return None
 
 def receive_full_response(sock):
-    """Menerima seluruh respon dari server hingga ditemukan delimiter."""
+    """Receives the entire response from the server until a delimiter is found."""
     full_response_buffer = b""
     start_time = time.time()
     while True:
         try:
             data = sock.recv(SOCKET_BUFFER_SIZE)
             if not data:
-                # Koneksi ditutup oleh server
                 logger.debug("Server closed connection during response receive.")
-                break 
+                break  
             full_response_buffer += data
             if b"\r\n\r\n" in full_response_buffer:
                 break
@@ -94,7 +89,7 @@ def receive_full_response(sock):
     return full_response_buffer
 
 def send_and_receive_command(sock, command_str, file_content_b64=None):
-    """Mengirim perintah dan menerima respon dari server."""
+    """Sends a command and receives a response from the server."""
     try:
         request_data = command_str.encode('utf-8') + b"\r\n\r\n"
         if file_content_b64:
@@ -102,7 +97,6 @@ def send_and_receive_command(sock, command_str, file_content_b64=None):
         
         sock.sendall(request_data)
 
-        # Menerima response
         full_response_buffer = receive_full_response(sock)
         
         response_parts = full_response_buffer.split(b"\r\n\r\n", 1)
@@ -119,9 +113,8 @@ def send_and_receive_command(sock, command_str, file_content_b64=None):
             logger.error(f"Failed to decode JSON response header: '{response_header[:200]}...'")
             return {"status": "ERROR", "data": "Invalid JSON response from server."}
 
-        # Untuk GET command, konten file ada di body
         if response_dict.get('status') == 'OK' and command_str.startswith('GET'):
-            response_dict['data'] = response_body.decode('utf-8') # Dekode konten base64
+            response_dict['data'] = response_body.decode('utf-8')
             
         return response_dict
     except socket.timeout:
@@ -131,20 +124,19 @@ def send_and_receive_command(sock, command_str, file_content_b64=None):
         logger.error(f"Error during socket communication: {e}", exc_info=True)
         return {"status": "ERROR", "data": f"Network error: {str(e)}"}
     finally:
-        # Socket ditutup di client_task
         pass
 
-# --- Fungsi Task Client ---
+# --- Client Task Function ---
 def client_task(task_id, server_address, operation, file_size_mb):
     """
-    Representasi sebuah worker client yang melakukan operasi.
-    Mengembalikan dictionary hasil untuk agregasi.
+    Represents a client worker performing an operation.
+    Returns a dictionary of results for aggregation.
     """
     start_time_task = time.time()
     success = False
     bytes_processed = 0
-    filename_prefix = f"test_file_{file_size_mb}MB" # Nama file tanpa ID task untuk upload/download
-    filename = f"{filename_prefix}_{task_id}.bin" # Nama file dengan ID task (jika unik diperlukan)
+    filename_prefix = f"test_file_{file_size_mb}MB"
+    filename = f"{filename_prefix}_{task_id}.bin"
 
     sock = None
     try:
@@ -153,11 +145,6 @@ def client_task(task_id, server_address, operation, file_size_mb):
             raise ConnectionError(f"Failed to connect for task {task_id}.")
 
         if operation == 'UPLOAD':
-            # Untuk upload, kita perlu nama file yang sama untuk semua client pada volume yang sama
-            # agar file dummy tidak dibuat berkali-kali jika tidak diperlukan.
-            # Namun, untuk menghindari konflik penulisan/pembacaan di server, 
-            # kita tetap upload dengan nama unik per task_id.
-            # Jadi, buat file dummy dengan nama generik dulu, lalu upload dengan nama spesifik.
             dummy_file_path = generate_dummy_file(f"{filename_prefix}.bin", file_size_mb)
             if not dummy_file_path:
                 raise FileNotFoundError(f"Failed to generate dummy file {filename_prefix}.bin")
@@ -177,10 +164,7 @@ def client_task(task_id, server_address, operation, file_size_mb):
                 logger.error(f"Client {task_id} UPLOAD {filename} failed: {response.get('data')}")
 
         elif operation == 'DOWNLOAD':
-            # Untuk download, kita mencoba download file yang *seharusnya* sudah diupload oleh salah satu client
-            # atau sudah ada di server (misalnya dari upload sebelumnya).
-            # Menggunakan nama file yang sama seperti saat diupload.
-            filename_to_download = f"{filename_prefix}_{task_id}.bin" # Download file yang diupload oleh client ini
+            filename_to_download = f"{filename_prefix}_{task_id}.bin"
             
             logger.debug(f"Client {task_id} DOWNLOADING {filename_to_download} ({file_size_mb}MB) from {server_address}...")
             response = send_and_receive_command(sock, f"GET {filename_to_download}")
@@ -198,22 +182,17 @@ def client_task(task_id, server_address, operation, file_size_mb):
                     logger.error(f"Client {task_id} DOWNLOAD {filename_to_download} failed (decode/write): {e}", exc_info=True)
             else:
                 logger.error(f"Client {task_id} DOWNLOAD {filename_to_download} failed: {response.get('data')}")
-        
+            
         elif operation == 'LIST':
             logger.debug(f"Client {task_id} LISTING files from {server_address}...")
             response = send_and_receive_command(sock, "LIST")
             if response.get('status') == 'OK':
                 success = True
-                # Bytes processed for LIST is negligible, can be 0 or small constant
                 bytes_processed = len(json.dumps(response.get('data')).encode('utf-8'))
                 logger.info(f"Client {task_id} LIST successful. Found {len(response.get('data', []))} files.")
             else:
                 logger.error(f"Client {task_id} LIST failed: {response.get('data')}")
-        
-        # NOTE: DELETE operation is not included in the stress test combinations
-        # to avoid deleting files that other clients might need for DOWNLOAD.
-        # If DELETE is needed, ensure careful management of file lifecycle.
-
+            
     except ConnectionError as ce:
         logger.error(f"Client {task_id} connection error: {ce}")
     except Exception as e:
@@ -221,10 +200,9 @@ def client_task(task_id, server_address, operation, file_size_mb):
     finally:
         if sock:
             sock.close()
-    
+            
     end_time_task = time.time()
     duration = end_time_task - start_time_task
-    # Hindari ZeroDivisionError jika duration sangat kecil atau 0
     throughput = bytes_processed / duration if duration > 0 else 0 
 
     return {
@@ -235,11 +213,11 @@ def client_task(task_id, server_address, operation, file_size_mb):
         'throughput': throughput
     }
 
-# --- Fungsi Eksekusi Stress Test ---
+# --- Stress Test Execution Function ---
 def run_stress_test_scenario(server_ip, server_port, client_pool_type, num_client_workers, 
                              operation, file_size_mb, num_server_workers_target):
     """
-    Menjalankan satu skenario stress test dan mengumpulkan hasilnya.
+    Runs a single stress test scenario and collects results.
     """
     server_address = (server_ip, server_port)
     results = []
@@ -267,7 +245,6 @@ def run_stress_test_scenario(server_ip, server_port, client_pool_type, num_clien
                 results.append(future.result())
     except Exception as e:
         logger.critical(f"Error initializing or running client pool for scenario: {e}", exc_info=True)
-        # Populate results with failures if the pool itself failed
         for i in range(num_client_workers):
             results.append({
                 'task_id': i + 1, 'success': False, 'duration': 0, 
@@ -285,8 +262,6 @@ def run_stress_test_scenario(server_ip, server_port, client_pool_type, num_clien
     total_bytes_processed_all_clients = sum(r['bytes_processed'] for r in results if r and r['success'])
     avg_throughput_per_client = total_bytes_processed_all_clients / total_duration_all_clients if total_duration_all_clients > 0 else 0
 
-    # Estimasi worker server yang sukses/gagal didasarkan pada client yang sukses/gagal
-    # Ini adalah asumsi karena client tidak memiliki akses langsung ke metrik server.
     server_workers_successful = successful_clients 
     server_workers_failed = failed_clients
 
@@ -310,25 +285,25 @@ def main():
     ensure_directories_exist()
 
     if len(sys.argv) != 4:
-        print("Usage: python file_client_stress_test.py <server_ip> <server_port> <client_worker_type>")
-        print("  <client_worker_type>: 'thread' or 'process'")
+        print("Usage: python file_client_stress_test.py <server_ip_address> <server_port_number> <client_worker_type>")
+        print("  <client_worker_type> can be 'thread' or 'process'")
         sys.exit(1)
 
     server_ip = sys.argv[1]
     server_port = int(sys.argv[2])
-    client_pool_type = sys.argv[3].lower() # 'thread' or 'process'
+    client_pool_type = sys.argv[3].lower()
 
     if client_pool_type not in ['thread', 'process']:
-        logger.error("Invalid <client_worker_type>. Must be 'thread' or 'process'.")
+        logger.error("Invalid client worker type. It must be 'thread' or 'process'.")
         sys.exit(1)
 
-    # --- Definisi Skenario ---
+    # --- Scenario Definitions ---
     operations = ['UPLOAD', 'DOWNLOAD']
     volume_sizes_mb = [10, 50, 100]
     num_client_worker_pools = [1, 5, 50]
-    num_server_worker_pools_target = [1, 5, 50] # Ini adalah target, server harus dijalankan secara manual
+    num_server_worker_pools_target = [1, 5, 50]
 
-    # Persiapan CSV output
+    # CSV output preparation
     output_filename = f"stress_test_results_client_{client_pool_type}.csv"
     fieldnames = [
         'Nomor', 'Operasi', 'Volume (MB)', 'Jumlah Client Worker Pool', 
@@ -340,9 +315,9 @@ def main():
     print(f"\n--- Preparing to run stress tests ---")
     print(f"Results will be saved to: {output_filename}")
     print(f"Make sure your server is running with the correct number of workers for each scenario.")
-    print(f"Example server commands:")
-    print(f"  For Thread Server: python file_server_thread_pool.py <num_workers> {server_port}")
-    print(f"  For Process Server: python file_server_process_pool.py <num_workers> {server_port}")
+    print(f"Example server startup:")
+    print(f"  For Thread Server: Run the thread pool server script with an argument for the number of workers, e.g., 'python server_thread_pool.py 5 {server_port}'")
+    print(f"  For Process Server: Run the process pool server script with an argument for the number of workers, e.g., 'python server_process_pool.py 5 {server_port}'")
     print(f"\nSTARTING TEST IN 5 SECONDS. Press Ctrl+C to abort.")
     time.sleep(5)
 
@@ -388,7 +363,7 @@ def main():
                                 'Server Sukses (Est.)': scenario_results['server_workers_successful'],
                                 'Server Gagal (Est.)': scenario_results['server_workers_failed']
                             })
-                            csvfile.flush() # Pastikan data ditulis segera ke file
+                            csvfile.flush()
                         except KeyboardInterrupt:
                             logger.info("Stress test aborted by user.")
                             sys.exit(0)
@@ -411,5 +386,5 @@ def main():
     logger.info(f"\nAll stress test scenarios completed. Results saved to {output_filename}")
 
 if __name__ == "__main__":
-    multiprocessing.freeze_support() # Penting untuk multiprocessing di Windows
+    multiprocessing.freeze_support()
     main()
