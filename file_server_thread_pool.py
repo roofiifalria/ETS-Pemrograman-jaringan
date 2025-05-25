@@ -8,9 +8,7 @@ import os
 import time
 import base64
 
-# Konfigurasi logging
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] (%(threadName)-10s) %(message)s')
-# logging.getLogger().setLevel(logging.DEBUG) # Uncomment for detailed server debugging
 
 from file_interface import FileInterface
 
@@ -20,7 +18,7 @@ def process_client_request(connection, address):
     """
     fp = FileInterface()
 
-    full_data_buffer = b"" 
+    full_data_buffer = b""  
     header_str = ""
     
     try:
@@ -31,7 +29,7 @@ def process_client_request(connection, address):
             data = connection.recv(65536) # Menerima data
             if not data:
                 logging.info(f"Client {address} disconnected during receive or no data. Closing connection.")
-                return 
+                return  
 
             full_data_buffer += data
             separator_index = full_data_buffer.find(b"\r\n\r\n")
@@ -154,7 +152,7 @@ class ServerThreadPool(threading.Thread):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python file_server_thread_pool.py <num_workers_server> [port]")
+        print("Usage: python file_server_thread_pool.py <number_of_server_workers> [port_number]")
         sys.exit(1)
     
     num_workers_server = int(sys.argv[1])
