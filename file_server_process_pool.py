@@ -8,9 +8,7 @@ import multiprocessing
 import time
 import base64
 
-# Konfigurasi logging (dijalankan di main process, proses anak akan mewarisi)
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] (%(processName)-10s) %(message)s')
-# logging.getLogger().setLevel(logging.DEBUG) # Uncomment for detailed server debugging
 
 from file_interface import FileInterface
 
@@ -24,7 +22,7 @@ def process_client_request_mp(connection_fd, address_tuple):
     client_address = tuple(address_tuple)
     fp = FileInterface() # Instansi baru per proses
 
-    full_data_buffer = b"" 
+    full_data_buffer = b""  
     header_str = ""
     
     try:
@@ -35,7 +33,7 @@ def process_client_request_mp(connection_fd, address_tuple):
             data = conn.recv(65536) # Menerima data
             if not data:
                 logging.info(f"Client {client_address} disconnected during receive or no data. Closing connection.")
-                return 
+                return  
 
             full_data_buffer += data
             separator_index = full_data_buffer.find(b"\r\n\r\n")
@@ -162,7 +160,7 @@ class ServerProcessPool(multiprocessing.Process):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python file_server_process_pool.py <num_workers_server> [port]")
+        print("Usage: python file_server_process_pool.py <number_of_server_workers> [port_number]")
         sys.exit(1)
     
     num_workers_server = int(sys.argv[1])
